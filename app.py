@@ -62,12 +62,43 @@ st.markdown('<div class="header"><h1>New Employee Data Uploader</h1><p>Streamlin
 st.markdown(
     """
     <div class="upload-section">
-    <p>This tool lets you upload a new employee details file (DOCX or PDF) and an Excel master record.
-    Any missing fields will be set as NaN.</p>
+      <p>
+         This tool lets you upload a new employee details file (DOCX or PDF) and an Excel master record.
+         Any missing fields will be set as NaN.
+      </p>
+      <h4>Required Columns</h4>
+      <ul>
+         <li>Title</li>
+         <li>Full Name</li>
+         <li>Home Address</li>
+         <li>Home Telephone Number</li>
+         <li>Mobile Telephone Number</li>
+         <li>Telephone Number</li>
+         <li>Personal Email Address</li>
+         <li>Date of Birth</li>
+         <li>Pronouns</li>
+         <li>National Insurance Number (or National Insurance No.)</li>
+         <li>Job Title</li>
+         <li>Start Date (or Date Employment Commenced)</li>
+         <li>Basic Salary</li>
+         <li>Pension Contribution</li>
+         <li>Marital Status</li>
+         <li>Nationality</li>
+         <li>Country of Residence</li>
+         <li>Name of an Emergency Contact (or Emergency Contact Name)</li>
+         <li>Emergency Contact Number (or Telephone Number of Emergency Contact)</li>
+         <li>Emergency Contact Address</li>
+         <li>Emergency Contact Email</li>
+         <li>Relationship to Emergency Contact</li>
+         <li>Employment Location Postcode</li>
+         <li>Notes</li>
+      </ul>
+      <p>
+         If you want to add more columns, please contact Ahmed.
+      </p>
     </div>
     """, unsafe_allow_html=True
 )
-
 # Two-column layout for file uploads.
 col1, col2 = st.columns(2)
 with col1:
