@@ -1,6 +1,9 @@
 import streamlit as st
 import pandas as pd
-from logic import parse_docx, parse_pdf, load_master_file, append_employee_record, export_master_file
+from logic import (
+    parse_docx, parse_pdf, parse_csv_employee, parse_excel_employee, 
+    load_master_file, append_employee_record, export_master_file
+)
 
 # Enable debugging output
 DEBUG = True
@@ -63,77 +66,74 @@ st.markdown(
     """
     <div class="upload-section">
       <p>
-         This tool lets you upload a new employee details file (DOCX or PDF) and an Excel master record.
-         Any missing fields will be set as NaN.
+         This tool lets you upload one or more new employee details files (DOCX, PDF, CSV, TXT, or Excel) along with a master record file.
+         Any missing fields will be set as NA.
       </p>
-      <h4>Required Columns</h4>
+      <h4>Required Columns (Employee Files)</h4>
       <ul>
          <li>Title</li>
-         <li>Full Name</li>
-         <li>Home Address</li>
+         <li>Full Name or Name (for non-Excel files) OR First Name & Surname (for Excel files)</li>
+         <li>Home Address (or Address 1, Address 2, ... for Excel files)</li>
          <li>Home Telephone Number</li>
          <li>Mobile Telephone Number</li>
-         <li>Telephone Number</li>
-         <li>Personal Email Address</li>
+         <li>Personal Email Address (or Email Address)</li>
          <li>Date of Birth</li>
-         <li>Pronouns</li>
-         <li>National Insurance Number (or National Insurance No.)</li>
-         <li>Job Title</li>
+         <li>Legal Gender</li>
          <li>Start Date (or Date Employment Commenced)</li>
-         <li>Basic Salary</li>
-         <li>Pension Contribution</li>
-         <li>Marital Status</li>
-         <li>Nationality</li>
-         <li>Country of Residence</li>
-         <li>Name of an Emergency Contact (or Emergency Contact Name)</li>
-         <li>Emergency Contact Number (or Telephone Number of Emergency Contact)</li>
-         <li>Emergency Contact Address</li>
-         <li>Emergency Contact Email</li>
-         <li>Relationship to Emergency Contact</li>
-         <li>Employment Location Postcode</li>
-         <li>Notes</li>
+         <li>Basic Annual Salary</li>
+         <li>NI Number</li>
+         <!-- Additional fields may be present -->
       </ul>
-      <p>
-         If you want to add more columns, please contact Ahmed.
-      </p>
     </div>
     """, unsafe_allow_html=True
 )
+
 # Two-column layout for file uploads.
 col1, col2 = st.columns(2)
 with col1:
-    emp_file = st.file_uploader("Upload Employee Details File (DOCX or PDF)", type=["docx", "pdf"])
+    # Allow multiple employee files (DOCX, PDF, CSV, TXT, Excel)
+    emp_files = st.file_uploader("Upload Employee Details File(s)", 
+                                 type=["docx", "pdf", "csv", "txt", "xlsx", "xls"], 
+                                 accept_multiple_files=True)
 with col2:
-    master_file = st.file_uploader("Upload the Excel Master File", type=["xlsx", "xls"])
+    # Allow master file in Excel, CSV, or TXT format
+    master_file = st.file_uploader("Upload the Master File", type=["xlsx", "xls", "csv", "txt"])
 
-if emp_file is not None and master_file is not None:
-    file_bytes = emp_file.read()
-    if emp_file.name.lower().endswith(".docx"):
-        emp_data = parse_docx(file_bytes, debug=DEBUG)
-    elif emp_file.name.lower().endswith(".pdf"):
-        emp_data = parse_pdf(file_bytes, debug=DEBUG)
-    else:
-        st.error("Unsupported employee file format.")
-        emp_data = {}
-
-    st.subheader("Extracted Employee Data")
-    st.write(emp_data)
-    
+if emp_files is not None and len(emp_files) > 0 and master_file is not None:
     try:
         df = load_master_file(master_file, master_file.name)
     except Exception as e:
         st.error(f"Error reading master file: {e}")
         df = pd.DataFrame()
     
+    for emp_file in emp_files:
+        file_bytes = emp_file.read()
+        emp_data_list = []
+        if emp_file.name.lower().endswith(".docx"):
+            emp_data = parse_docx(file_bytes, debug=DEBUG)
+            emp_data_list.append(emp_data)
+        elif emp_file.name.lower().endswith(".pdf"):
+            emp_data = parse_pdf(file_bytes, debug=DEBUG)
+            emp_data_list.append(emp_data)
+        elif emp_file.name.lower().endswith((".csv", ".txt")):
+            emp_data = parse_csv_employee(file_bytes, debug=DEBUG)
+            emp_data_list.append(emp_data)
+        elif emp_file.name.lower().endswith((".xlsx", ".xls")):
+            # For Excel employee files, treat each row as a new employee.
+            emp_data_list = parse_excel_employee(file_bytes, debug=DEBUG)
+        else:
+            st.error(f"Unsupported employee file format: {emp_file.name}")
+            continue
+
+        for idx, emp_data in enumerate(emp_data_list):
+            st.subheader(f"Extracted Data from {emp_file.name} - Employee {idx+1}")
+            # st.write(emp_data)  # Commented out to hide JSON output
+            df = append_employee_record(df, emp_data, debug=DEBUG)
+    
     st.subheader("Current Master Record")
     st.dataframe(df)
     
-    updated_df = append_employee_record(df, emp_data, debug=DEBUG)
-    
-    st.subheader("Updated Master Record")
-    st.dataframe(updated_df)
-    
-    output, mime, file_ext = export_master_file(updated_df, master_file.name)
+    output, mime, file_ext = export_master_file(df, master_file.name)
     st.markdown("<hr>", unsafe_allow_html=True)
     st.markdown("<h3 style='text-align: center;'>Download Updated Master File</h3>", unsafe_allow_html=True)
     st.download_button(

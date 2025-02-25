@@ -2,12 +2,13 @@ import io
 import re
 import pandas as pd
 import numpy as np
+import docx2txt
 import docx
 import PyPDF2
 import datetime
 
 # =========================
-# 1) Field Map
+# 1) Field Map (for non-Excel employee files)
 # =========================
 FIELD_MAP = {
     "Title": "Title",
@@ -41,286 +42,286 @@ FIELD_MAP = {
 }
 
 # =========================
-# 2) Parsing DOCX & PDF
+# 2) Parsing Employee Files (DOCX, PDF, CSV/TXT, Excel)
 # =========================
 
 def parse_docx(file_bytes, debug=False):
-    """
-    Parse a DOCX file, extracting text line by line.
-    If a line starts with a known key, we take the rest of the line as the value.
-    If a line exactly matches a key (and no value on same line), 
-    we look at the next line for the value.
-    """
-    doc = docx.Document(io.BytesIO(file_bytes))
-    lines = [para.text.strip() for para in doc.paragraphs if para.text.strip()]
+    # Use docx2txt to extract all text from the DOCX file
+    text = docx2txt.process(io.BytesIO(file_bytes))
+    # Split the text into lines and remove empty ones
+    lines = [line.strip() for line in text.split("\n") if line.strip()]
     if debug:
         print("DEBUG: Raw DOCX lines:", lines)
     data = {}
-
     for i, line in enumerate(lines):
-        found_key = False
         for key in FIELD_MAP:
-            # Check if line starts with key (case-insensitive)
             if line.lower().startswith(key.lower()):
-                # Extract the remainder of the line
                 potential_value = line[len(key):].strip(" :")
                 if potential_value:
-                    # We have "Key: Value" on the same line
                     data[FIELD_MAP[key]] = potential_value
                     if debug:
                         print(f"DEBUG: Found '{key}' on same line -> {potential_value}")
-                    found_key = True
                     break
                 else:
-                    # The line might exactly match the key, with the value on the next line
-                    if line.strip().lower() == key.lower():
-                        if (i + 1) < len(lines):
-                            fallback_value = lines[i + 1].strip()
-                            data[FIELD_MAP[key]] = fallback_value
-                            if debug:
-                                print(f"DEBUG: Found '{key}' on separate line -> {fallback_value}")
-                        found_key = True
+                    if line.strip().lower() == key.lower() and (i + 1) < len(lines):
+                        fallback_value = lines[i + 1].strip()
+                        data[FIELD_MAP[key]] = fallback_value
+                        if debug:
+                            print(f"DEBUG: Found '{key}' on separate line -> {fallback_value}")
                         break
-        # If not found_key, just move on to the next line
     return data
 
 def parse_pdf(file_bytes, debug=False):
-    """
-    Parse a PDF file, extracting text line by line.
-    If a line starts with a known key, we take the rest of the line as the value.
-    If a line exactly matches a key (and no value on same line), 
-    we look at the next line for the value.
-    """
     pdf_reader = PyPDF2.PdfReader(io.BytesIO(file_bytes))
     text = ""
     for page in pdf_reader.pages:
         page_text = page.extract_text()
         if page_text:
             text += page_text + "\n"
-
     lines = [line.strip() for line in text.split("\n") if line.strip()]
     if debug:
         print("DEBUG: Raw PDF lines:", lines)
     data = {}
-
     for i, line in enumerate(lines):
-        found_key = False
         for key in FIELD_MAP:
-            # Check if line starts with key (case-insensitive)
             if line.lower().startswith(key.lower()):
-                # Extract the remainder of the line
                 potential_value = line[len(key):].strip(" :")
                 if potential_value:
-                    # We have "Key: Value" on the same line
                     data[FIELD_MAP[key]] = potential_value
                     if debug:
                         print(f"DEBUG: Found '{key}' on same line -> {potential_value}")
-                    found_key = True
                     break
                 else:
-                    # The line might exactly match the key, with the value on the next line
-                    if line.strip().lower() == key.lower():
-                        if (i + 1) < len(lines):
-                            fallback_value = lines[i + 1].strip()
-                            data[FIELD_MAP[key]] = fallback_value
-                            if debug:
-                                print(f"DEBUG: Found '{key}' on separate line -> {fallback_value}")
-                        found_key = True
+                    if line.strip().lower() == key.lower() and (i + 1) < len(lines):
+                        fallback_value = lines[i + 1].strip()
+                        data[FIELD_MAP[key]] = fallback_value
+                        if debug:
+                            print(f"DEBUG: Found '{key}' on separate line -> {fallback_value}")
                         break
-        # If not found_key, just move on to the next line
     return data
 
+def parse_csv_employee(file_bytes, debug=False):
+    text = file_bytes.decode('utf-8')
+    try:
+        df = pd.read_csv(io.StringIO(text))
+    except Exception as e:
+        if debug:
+            print("DEBUG: Error parsing CSV/TXT employee file:", e)
+        return {}
+    if len(df) > 0:
+        row = df.iloc[0].to_dict()
+        if debug:
+            print("DEBUG: Parsed CSV/TXT employee row:", row)
+        return row
+    return {}
+
+# New: Map Excel employee row according to the desired master mapping.
+def map_excel_employee_data(row, debug=False):
+    mapped = {}
+    mapped["Surname*"] = row.get("Surname", np.nan)
+    mapped["FirstName*"] = row.get("First Name", np.nan)
+    mapped["SchemeRef*"] = np.nan
+    mapped["CategoryName"] = np.nan
+    mapped["Title"] = row.get("Title", np.nan)
+    mapped["AddressLine1"] = row.get("Address 1", np.nan)
+    mapped["AddressLine2"] = row.get("Address 2", np.nan)
+    mapped["AddressLine3"] = row.get("Address 3", np.nan)
+    mapped["AddressLine4"] = row.get("Address 4", np.nan)
+    mapped["CityTown"] = row.get("City", np.nan)
+    mapped["County"] = row.get("county", np.nan)
+    mapped["Country"] = row.get("Country of Residence", np.nan)
+    mapped["PostCode"] = row.get("Post Code", np.nan)
+    mapped["AdviceType*"] = row.get("AdviceType", np.nan)
+    # Robustly parse dates from Excel (convert to string first)
+    mapped["DateJoinedScheme"] = robust_parse_date_str(str(row.get("Start Date", "")))
+    mapped["DateofBirth*"] = robust_parse_date_str(str(row.get("Date of Birth", "")))
+    mapped["EmailAddress"] = row.get("Email Address", np.nan)
+    mapped["Gender"] = row.get("Legal Gender", np.nan)
+    mapped["HomeNumber"] = row.get("Home Telephone Number", np.nan)
+    mapped["MobileNumber"] = row.get("Mobile Telephone Number", np.nan)
+    mapped["NINumber"] = row.get("NI Number", np.nan)
+    mapped["PensionableSalary"] = row.get("Basic Annual Salary", np.nan)
+    mapped["PensionableSalaryStartDate"] = mapped["DateJoinedScheme"]
+    mapped["SalaryPostSacrifice"] = np.nan
+    mapped["PolicyNumber"] = np.nan
+    mapped["SellingAdviserId*"] = np.nan
+    mapped["SplitTemplateGroupName"] = np.nan
+    mapped["SplitTemplateGroupSource"] = np.nan
+    mapped["ServiceStatus"] = np.nan
+    mapped["ClientCategory"] = np.nan
+    if debug:
+        print("DEBUG: Mapped Excel row:", mapped)
+    return mapped
+
+# New: Parse Excel employee file, returning a list of employee data dictionaries.
+def parse_excel_employee(file_bytes, debug=False):
+    try:
+        df = pd.read_excel(io.BytesIO(file_bytes))
+        df.columns = df.columns.str.strip()  # Remove extra spaces from column names
+    except Exception as e:
+        if debug:
+            print("DEBUG: Error parsing Excel employee file:", e)
+        return []
+    emp_data_list = []
+    for index, row in df.iterrows():
+        row_dict = row.to_dict()
+        mapped = map_excel_employee_data(row_dict, debug=debug)
+        emp_data_list.append(mapped)
+    return emp_data_list
+
+
+
 # =========================
-# 3) Load Master File
+# 3) Load Master File (Excel, CSV, or TXT)
 # =========================
 
 def load_master_file(file_obj, file_name):
-    """
-    Loads an Excel file (XLS or XLSX) into a Pandas DataFrame,
-    stripping whitespace from column names to avoid duplicates.
-    """
     if file_name.lower().endswith((".xlsx", ".xls")):
         df = pd.read_excel(file_obj)
-        df.columns = df.columns.str.strip()  # remove leading/trailing spaces
-        return df
+    elif file_name.lower().endswith((".csv", ".txt")):
+        df = pd.read_csv(file_obj)
     else:
-        raise ValueError("Unsupported file type. Please upload an Excel file.")
+        raise ValueError("Unsupported master file type. Please upload an Excel, CSV, or TXT file.")
+    df.columns = df.columns.str.strip()
+    return df
 
 # =========================
 # 4) Robust Date Parsing
 # =========================
 
 def remove_ordinal_suffixes(s: str) -> str:
-    """
-    Remove ordinal suffixes like 'st', 'nd', 'rd', 'th' from day numbers.
-    E.g. '1st March 2025' -> '1 March 2025'
-    """
     pattern = r'(\d+)(st|nd|rd|th)\b'
     return re.sub(pattern, r'\1', s, flags=re.IGNORECASE)
 
 def fix_common_numeric_typos(s: str) -> str:
-    """
-    Attempt to fix common typos in numeric contexts:
-      - 'O' or 'o' -> '0'
-      - 'l' or 'I' -> '1'
-    But only when they appear between digits or date delimiters.
-    """
     text = s.lower()
-    # Replace 'o' with '0' if between digits or date delimiters
     text = re.sub(r'(?<=[0-9./\- ])o(?=[0-9./\- ])', '0', text)
-    # Replace 'l' or 'i' with '1' if between digits or date delimiters
     text = re.sub(r'(?<=[0-9./\- ])[li](?=[0-9./\- ])', '1', text)
     return text
 
 def fix_missing_slash_between_month_and_year(s: str) -> str:
-    """
-    If the user typed something like '01/031987' (missing slash before year),
-    insert a slash to make it '01/03/1987'.
-    We'll detect patterns like ^DD/MMYYYY$ or ^D/MYYYY$.
-    """
     pattern = r'^(\d{1,2})/(\d{1,2})(\d{4})$'
     replacement = r'\1/\2/\3'
     return re.sub(pattern, replacement, s)
-
-def robust_parse_date_str(date_str: str) -> pd.Timestamp:
-    """
-    Attempt to parse a variety of date formats, correcting typical user typos.
-    Returns NaT if parsing fails.
-    """
+def robust_parse_date_str(date_str) -> object:
+    # If the input is not a string, try to convert it directly.
+    if not isinstance(date_str, str):
+        try:
+            parsed = pd.to_datetime(date_str, errors='coerce', dayfirst=True)
+            return parsed if not pd.isnull(parsed) else str(date_str)
+        except Exception:
+            return str(date_str)
+    # Handle strings like "Timestamp('2000-02-01 00:00:00')"
+    if date_str.startswith("Timestamp("):
+        inner = date_str[len("Timestamp("):].rstrip(")")
+        inner = inner.replace("'", "").replace('"', "")
+        try:
+            parsed = pd.to_datetime(inner)
+            return parsed if not pd.isnull(parsed) else date_str
+        except Exception:
+            return date_str
     s = date_str.strip()
-
-    # 1) Remove ordinal suffixes like '1st', '2nd', '3rd', '4th'...
     s = remove_ordinal_suffixes(s)
-    # 2) Fix common numeric typos (e.g. 'o' -> '0', 'l' -> '1' in numeric context)
     s = fix_common_numeric_typos(s)
-    # 3) Fix missing slash between month and year (e.g. '01/031987' -> '01/03/1987')
     s = fix_missing_slash_between_month_and_year(s)
-
-    # 4) Finally, parse with dayfirst=True and coerce errors to NaT
     parsed = pd.to_datetime(s, errors='coerce', dayfirst=True)
-    return parsed if not pd.isnull(parsed) else pd.NaT
+    return parsed if not pd.isnull(parsed) else s
+
+
 
 # =========================
-# 5) Map Employee Data
+# 5) Map Employee Data (for non-Excel files)
 # =========================
+
+def safe_str(val):
+    if isinstance(val, str):
+        return val
+    elif pd.isnull(val):
+        return ""
+    else:
+        return str(val)
 
 def map_employee_data(emp_data, debug=False):
-    """
-    Maps the extracted data into a consistent set of fields
-    and uses robust date parsing for Date of Birth and Start Date.
-    """
     if debug:
         print("DEBUG: Mapping employee data:", emp_data)
-
     mapped = {}
-    mapped["Title"] = emp_data.get("Title", np.nan)
-
-    # Split Full Name into first/last
-    full_name = emp_data.get("Full Name", "").strip()
+    full_name = safe_str(emp_data.get("Full Name", "") or emp_data.get("Name", "")).strip()
     if full_name:
         parts = full_name.split()
-        mapped["First Name"] = parts[0]
-        mapped["Surname"] = parts[-1] if len(parts) > 1 else np.nan
+        mapped["FirstName*"] = parts[0]
+        mapped["Surname*"] = " ".join(parts[1:]) if len(parts) > 1 else np.nan
     else:
-        mapped["First Name"] = np.nan
-        mapped["Surname"] = np.nan
-
-    mapped["Legal Gender"] = np.nan
-    mapped["Marital Status"] = emp_data.get("Marital Status", np.nan)
-
-    # Address
-    home_addr = emp_data.get("Home Address", "")
+        mapped["FirstName*"] = np.nan
+        mapped["Surname*"] = np.nan
+    mapped["SchemeRef*"] = np.nan
+    mapped["CategoryName"] = np.nan
+    mapped["Title"] = safe_str(emp_data.get("Title", "")).strip() or np.nan
+    home_addr = safe_str(emp_data.get("Home Address", "") or emp_data.get("Address", "")).strip()
     addr_parts = [part.strip() for part in home_addr.split("\n") if part.strip()]
     if len(addr_parts) == 1:
         addr_parts = [x.strip() for x in addr_parts[0].split(",") if x.strip()]
-    mapped["Address 1"] = addr_parts[0] if len(addr_parts) >= 1 else np.nan
-    mapped["Address 2"] = addr_parts[1] if len(addr_parts) >= 2 else np.nan
-    mapped["Address 3"] = addr_parts[2] if len(addr_parts) >= 3 else np.nan
-    mapped["Address 4"] = addr_parts[3] if len(addr_parts) >= 4 else np.nan
-    mapped["Post Code"] = addr_parts[-1] if len(addr_parts) >= 5 else np.nan
+    mapped["AddressLine1"] = addr_parts[0] if len(addr_parts) >= 1 else np.nan
+    mapped["AddressLine2"] = addr_parts[1] if len(addr_parts) >= 2 else np.nan
+    mapped["AddressLine3"] = addr_parts[2] if len(addr_parts) >= 3 else np.nan
+    mapped["AddressLine4"] = addr_parts[3] if len(addr_parts) >= 4 else np.nan
+    mapped["CityTown"] = np.nan
+    mapped["County"] = np.nan
+    mapped["Country"] = np.nan
+    mapped["PostCode"] = addr_parts[4] if len(addr_parts) >= 5 else np.nan
+    mapped["AdviceType*"] = np.nan
 
-    # Date of Birth
-    dob = robust_parse_date_str(emp_data.get("Date of Birth", ""))
-    mapped["Date of Birth"] = dob if not pd.isnull(dob) else np.nan
+    # Corrected: Use emp_data instead of row.
+    mapped["DateJoinedScheme"] = robust_parse_date_str(safe_str(emp_data.get("Start Date", "")))
+    dob_raw = safe_str(emp_data.get("Date of Birth", "") or emp_data.get("DOB", "")).strip()
+    dob = robust_parse_date_str(dob_raw)
+    mapped["DateofBirth*"] = dob if not pd.isnull(dob) else np.nan
 
-    # National Insurance
-    mapped["NI Number"] = emp_data.get("National Insurance Number", np.nan)
-
-    # Start Date
-    start_date_raw = emp_data.get("Start Date", "")
-    start_date_parsed = robust_parse_date_str(start_date_raw)
-    mapped["Start Date"] = start_date_parsed if not pd.isnull(start_date_parsed) else np.nan
-
-    mapped["Job Title"] = emp_data.get("Job Title", np.nan)
-    mapped["Basic Annual Salary"] = emp_data.get("Basic Salary", np.nan)
-    mapped["Nationality"] = emp_data.get("Nationality", np.nan)
-    mapped["Email Address"] = emp_data.get("Personal Email Address", np.nan)
-    mapped["Any Other Information"] = emp_data.get("Notes", np.nan)
+    mapped["EmailAddress"] = safe_str(emp_data.get("Personal Email Address", "") or emp_data.get("Email", "")).strip() or np.nan
+    mapped["Gender"] = safe_str(emp_data.get("Gender", "")).strip() or np.nan
+    home_num = safe_str(emp_data.get("Home Telephone Number", "") or emp_data.get("Telephone Number", "")).strip()
+    mapped["HomeNumber"] = home_num if home_num != "" else np.nan
+    mapped["MobileNumber"] = safe_str(emp_data.get("Mobile Telephone Number", "")).strip() or np.nan
+    mapped["NINumber"] = safe_str(emp_data.get("National Insurance Number", "") or emp_data.get("NI Number", "")).strip() or np.nan
+    mapped["PensionableSalary"] = safe_str(emp_data.get("Basic Salary", "")).strip() or np.nan
+    mapped["PensionableSalaryStartDate"] = mapped["DateJoinedScheme"]
+    mapped["SalaryPostSacrifice"] = np.nan
+    mapped["PolicyNumber"] = np.nan
+    mapped["SellingAdviserId*"] = np.nan
+    mapped["SplitTemplateGroupName"] = np.nan
+    mapped["SplitTemplateGroupSource"] = np.nan
+    mapped["ServiceStatus"] = np.nan
+    mapped["ClientCategory"] = np.nan
 
     if debug:
         print("DEBUG: Mapped data:", mapped)
     return mapped
 
+
 # =========================
-# 6) Append Employee Record
+# 6) Append Employee Record to Master DataFrame
 # =========================
 
 def append_employee_record(df, emp_data, debug=False):
-    """
-    Append a new row with automatically generated:
-      - Id (increment from current max or start at 1 if none)
-      - Start time (now)
-      - Completion time (now)
-    and mapped employee data including 'Start Date' from "Date Employment Commenced".
-    """
-    mapped_data = map_employee_data(emp_data, debug=debug)
-
-    # 1) Generate new Id
-    if 'Id' in df.columns and not df['Id'].isnull().all():
-        max_id = df['Id'].max()
-        if pd.isnull(max_id):
-            max_id = 0
-        new_id = max_id + 1
+    # If the employee data is already mapped (e.g. from an Excel file), don't re-map it.
+    if "Surname*" in emp_data:
+        mapped_data = emp_data
     else:
-        # If 'Id' col doesn't exist or is empty
-        new_id = 1
-        if 'Id' not in df.columns:
-            df['Id'] = np.nan
-
-    # 2) Current timestamps for Start/Completion
-    now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-    # Build the new row dict
-    new_record = {
-        "Id": new_id,
-        "Start time": now_str,
-        "Completion time": now_str
-    }
-
-    # Add mapped data to new_record
-    for key, val in mapped_data.items():
-        new_record[key] = val
-
-    # The columns we want to ensure exist
+        mapped_data = map_employee_data(emp_data, debug=debug)
     master_columns = [
-        "Id", "Start time", "Completion time",
-        "Title", "First Name", "Surname", "Legal Gender", "Marital Status",
-        "Address 1", "Address 2", "Address 3", "Address 4", "Post Code",
-        "Date of Birth", "NI Number", "Start Date", "Job Title",
-        "Basic Annual Salary", "Nationality", "Email Address", "Any Other Information"
+        "Surname*", "FirstName*", "SchemeRef*", "CategoryName", "Title",
+        "AddressLine1", "AddressLine2", "AddressLine3", "AddressLine4",
+        "CityTown", "County", "Country", "PostCode", "AdviceType*",
+        "DateJoinedScheme", "DateofBirth*", "EmailAddress", "Gender",
+        "HomeNumber", "MobileNumber", "NINumber", "PensionableSalary",
+        "PensionableSalaryStartDate", "SalaryPostSacrifice", "PolicyNumber",
+        "SellingAdviserId*", "SplitTemplateGroupName", "SplitTemplateGroupSource",
+        "ServiceStatus", "ClientCategory"
     ]
-
-    # Ensure these columns exist in df
     for col in master_columns:
         if col not in df.columns:
             df[col] = np.nan
-
-    # Convert new_record into a 1-row DataFrame
-    new_row_df = pd.DataFrame([new_record])
-
-    # Append it
+    new_row_df = pd.DataFrame([mapped_data])
     df = pd.concat([df, new_row_df], ignore_index=True)
-
     return df
 
 # =========================
@@ -328,24 +329,16 @@ def append_employee_record(df, emp_data, debug=False):
 # =========================
 
 def export_master_file(df, file_name):
-    """
-    Export DataFrame to Excel with a consistent date/time format
-    for the 'Start Date', 'Start time', and 'Completion time' columns.
-    """
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
         df.to_excel(writer, index=False, sheet_name="Sheet1")
-
-        # Apply formatting
         workbook = writer.book
         worksheet = writer.sheets["Sheet1"]
-        date_format = workbook.add_format({"num_format": "yyyy-mm-dd HH:MM:SS"})
-
-        for col_name in ["Start Date", "Start time", "Completion time"]:
+        date_format = workbook.add_format({"num_format": "yyyy-mm-dd"})
+        for col_name in ["DateJoinedScheme", "DateofBirth*"]:
             if col_name in df.columns:
                 col_idx = df.columns.get_loc(col_name)
-                worksheet.set_column(col_idx, col_idx, 25, date_format)
-
+                worksheet.set_column(col_idx, col_idx, 20, date_format)
     mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     file_ext = "xlsx"
     output.seek(0)
