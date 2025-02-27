@@ -60,7 +60,7 @@ st.markdown(
 )
 
 # Header section
-st.markdown('<div class="header"><h1>New Employee Data Uploader</h1><p>Streamlined Onboarding for Modern HR</p></div>', unsafe_allow_html=True)
+st.markdown('<div class="header"><h1>New Employee Data Uploader</h1><p>Streamlined Onboarding</p></div>', unsafe_allow_html=True)
 
 st.markdown(
     """
@@ -69,21 +69,6 @@ st.markdown(
          This tool lets you upload one or more new employee details files (DOCX, PDF, CSV, TXT, or Excel) along with a master record file.
          Any missing fields will be set as NA.
       </p>
-      <h4>Required Columns (Employee Files)</h4>
-      <ul>
-         <li>Title</li>
-         <li>Full Name or Name (for non-Excel files) OR First Name & Surname (for Excel files)</li>
-         <li>Home Address (or Address 1, Address 2, ... for Excel files)</li>
-         <li>Home Telephone Number</li>
-         <li>Mobile Telephone Number</li>
-         <li>Personal Email Address (or Email Address)</li>
-         <li>Date of Birth</li>
-         <li>Legal Gender</li>
-         <li>Start Date (or Date Employment Commenced)</li>
-         <li>Basic Annual Salary</li>
-         <li>NI Number</li>
-         <!-- Additional fields may be present -->
-      </ul>
     </div>
     """, unsafe_allow_html=True
 )

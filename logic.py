@@ -329,17 +329,10 @@ def append_employee_record(df, emp_data, debug=False):
 # =========================
 
 def export_master_file(df, file_name):
-    output = io.BytesIO()
-    with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-        df.to_excel(writer, index=False, sheet_name="Sheet1")
-        workbook = writer.book
-        worksheet = writer.sheets["Sheet1"]
-        date_format = workbook.add_format({"num_format": "yyyy-mm-dd"})
-        for col_name in ["DateJoinedScheme", "DateofBirth*"]:
-            if col_name in df.columns:
-                col_idx = df.columns.get_loc(col_name)
-                worksheet.set_column(col_idx, col_idx, 20, date_format)
-    mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    file_ext = "xlsx"
-    output.seek(0)
+    # Convert the DataFrame to CSV format (as a string) without the index
+    csv_data = df.to_csv(index=False)
+    # Encode to UTF-8 bytes (required for the download button)
+    output = csv_data.encode('utf-8')
+    mime = "text/csv"
+    file_ext = "csv"
     return output, mime, file_ext
