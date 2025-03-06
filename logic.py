@@ -42,13 +42,45 @@ FIELD_MAP = {
 }
 
 # =========================
+# Additional Mapping for Excel files (e.g., Book1.xlsx)
+# =========================
+EXCEL_FIELD_MAP = {
+    "CategoryName": "Category Name",
+    "Title": "Title",
+    "Firstname": "First Name",
+    "Surname": "Surname",
+    "NI Number": "National Insurance Number",
+    "Date Of Birth": "Date of Birth",
+    "Sex": "Gender",
+    "Marital Status": "Marital Status",
+    "Address Line1": "Address 1",
+    "Address Line2": "Address 2",
+    "Address Line3": "Address 3",
+    "Address Line4": "Address 4",
+    "Address": "Home Address",  # In case a combined address is provided
+    "City": "City",
+    "County": "County",
+    "Country": "Country of Residence",
+    "Postcode": "Post Code",
+    "Hire Date": "Start Date",
+    "Position.1": "Job Title",
+    "Email": "Personal Email Address",
+    "Telephone.1": "Mobile Telephone Number",
+    "Basic Salary": "Basic Salary",
+    "Basic Annual Salary": "Basic Salary",  # Both map to the same internal key
+    "Salary": "Basic Salary",
+    "Salary": "Salary"   # New mapping for files that use "Salary"
+}
+
+# Merge the additional mapping into the existing FIELD_MAP.
+FIELD_MAP.update(EXCEL_FIELD_MAP)
+
+# =========================
 # 2) Parsing Employee Files (DOCX, PDF, CSV/TXT, Excel)
 # =========================
 
 def parse_docx(file_bytes, debug=False):
-    # Use docx2txt to extract all text from the DOCX file
     text = docx2txt.process(io.BytesIO(file_bytes))
-    # Split the text into lines and remove empty ones
     lines = [line.strip() for line in text.split("\n") if line.strip()]
     if debug:
         print("DEBUG: Raw DOCX lines:", lines)
@@ -115,32 +147,37 @@ def parse_csv_employee(file_bytes, debug=False):
         return row
     return {}
 
-# New: Map Excel employee row according to the desired master mapping.
+# =========================
+# 3) Updated: Map Excel Employee Row
+# =========================
+
 def map_excel_employee_data(row, debug=False):
     mapped = {}
+    # Use alternative keys if necessary
     mapped["Surname*"] = row.get("Surname", np.nan)
-    mapped["FirstName*"] = row.get("First Name", np.nan)
+    mapped["FirstName*"] = row.get("First Name", row.get("Firstname", np.nan))
     mapped["SchemeRef*"] = np.nan
-    mapped["CategoryName"] = np.nan
+    mapped["CategoryName"] = row.get("CategoryName", np.nan)
     mapped["Title"] = row.get("Title", np.nan)
-    mapped["AddressLine1"] = row.get("Address 1", np.nan)
-    mapped["AddressLine2"] = row.get("Address 2", np.nan)
-    mapped["AddressLine3"] = row.get("Address 3", np.nan)
-    mapped["AddressLine4"] = row.get("Address 4", np.nan)
+    # Map address: try split parts first; fallback to a combined "Address" field
+    mapped["AddressLine1"] = row.get("Address 1", row.get("Address Line1", row.get("Address", np.nan)))
+    mapped["AddressLine2"] = row.get("Address 2", row.get("Address Line2", np.nan))
+    mapped["AddressLine3"] = row.get("Address 3", row.get("Address Line3", np.nan))
+    mapped["AddressLine4"] = row.get("Address 4", row.get("Address Line4", np.nan))
     mapped["CityTown"] = row.get("City", np.nan)
-    mapped["County"] = row.get("county", np.nan)
-    mapped["Country"] = row.get("Country of Residence", np.nan)
-    mapped["PostCode"] = row.get("Post Code", np.nan)
+    mapped["County"] = row.get("County", row.get("county", np.nan))
+    mapped["Country"] = row.get("Country of Residence", row.get("Country", np.nan))
+    mapped["PostCode"] = row.get("Postcode", row.get("Post Code", np.nan))
     mapped["AdviceType*"] = row.get("AdviceType", np.nan)
-    # Robustly parse dates from Excel (convert to string first)
-    mapped["DateJoinedScheme"] = robust_parse_date_str(str(row.get("Start Date", "")))
-    mapped["DateofBirth*"] = robust_parse_date_str(str(row.get("Date of Birth", "")))
-    mapped["EmailAddress"] = row.get("Email Address", np.nan)
-    mapped["Gender"] = row.get("Legal Gender", np.nan)
-    mapped["HomeNumber"] = row.get("Home Telephone Number", np.nan)
-    mapped["MobileNumber"] = row.get("Mobile Telephone Number", np.nan)
+    mapped["DateJoinedScheme"] = robust_parse_date_str(str(row.get("Start Date", row.get("Hire Date", ""))))
+    mapped["DateofBirth*"] = robust_parse_date_str(str(row.get("Date of Birth", row.get("Date Of Birth", ""))))
+    mapped["EmailAddress"] = row.get("Email Address", row.get("Email", np.nan))
+    mapped["Gender"] = row.get("Legal Gender", row.get("Sex", np.nan))
+    mapped["HomeNumber"] = row.get("Home Telephone Number", row.get("Telephone Number", np.nan))
+    mapped["MobileNumber"] = row.get("Mobile Telephone Number", row.get("Telephone.1", np.nan))
     mapped["NINumber"] = row.get("NI Number", np.nan)
-    mapped["PensionableSalary"] = row.get("Basic Annual Salary", np.nan)
+    # Updated salary mapping: check for "Basic Annual Salary", "Basic Salary", then "Salary"
+    mapped["PensionableSalary"] = row.get("Basic Annual Salary", row.get("Basic Salary", row.get("Salary", np.nan)))
     mapped["PensionableSalaryStartDate"] = mapped["DateJoinedScheme"]
     mapped["SalaryPostSacrifice"] = np.nan
     mapped["PolicyNumber"] = np.nan
@@ -153,7 +190,10 @@ def map_excel_employee_data(row, debug=False):
         print("DEBUG: Mapped Excel row:", mapped)
     return mapped
 
-# New: Parse Excel employee file, returning a list of employee data dictionaries.
+# =========================
+# 4) Updated: Parse Excel Employee File
+# =========================
+
 def parse_excel_employee(file_bytes, debug=False):
     try:
         df = pd.read_excel(io.BytesIO(file_bytes))
@@ -169,10 +209,8 @@ def parse_excel_employee(file_bytes, debug=False):
         emp_data_list.append(mapped)
     return emp_data_list
 
-
-
 # =========================
-# 3) Load Master File (Excel, CSV, or TXT)
+# 5) Load Master File (Excel, CSV, or TXT)
 # =========================
 
 def load_master_file(file_obj, file_name):
@@ -186,7 +224,7 @@ def load_master_file(file_obj, file_name):
     return df
 
 # =========================
-# 4) Robust Date Parsing
+# 6) Updated: Robust Date Parsing
 # =========================
 
 def remove_ordinal_suffixes(s: str) -> str:
@@ -203,34 +241,33 @@ def fix_missing_slash_between_month_and_year(s: str) -> str:
     pattern = r'^(\d{1,2})/(\d{1,2})(\d{4})$'
     replacement = r'\1/\2/\3'
     return re.sub(pattern, replacement, s)
+
 def robust_parse_date_str(date_str) -> object:
-    # If the input is not a string, try to convert it directly.
     if not isinstance(date_str, str):
         try:
             parsed = pd.to_datetime(date_str, errors='coerce', dayfirst=True)
-            return parsed if not pd.isnull(parsed) else str(date_str)
+            return parsed if not pd.isnull(parsed) else pd.NaT
         except Exception:
-            return str(date_str)
-    # Handle strings like "Timestamp('2000-02-01 00:00:00')"
-    if date_str.startswith("Timestamp("):
-        inner = date_str[len("Timestamp("):].rstrip(")")
+            return pd.NaT
+    s = date_str.strip()
+    if s.lower() in ["", "nat"]:
+        return pd.NaT
+    if s.startswith("Timestamp("):
+        inner = s[len("Timestamp("):].rstrip(")")
         inner = inner.replace("'", "").replace('"', "")
         try:
             parsed = pd.to_datetime(inner)
-            return parsed if not pd.isnull(parsed) else date_str
+            return parsed if not pd.isnull(parsed) else pd.NaT
         except Exception:
-            return date_str
-    s = date_str.strip()
+            return pd.NaT
     s = remove_ordinal_suffixes(s)
     s = fix_common_numeric_typos(s)
     s = fix_missing_slash_between_month_and_year(s)
     parsed = pd.to_datetime(s, errors='coerce', dayfirst=True)
-    return parsed if not pd.isnull(parsed) else s
-
-
+    return parsed if not pd.isnull(parsed) else pd.NaT
 
 # =========================
-# 5) Map Employee Data (for non-Excel files)
+# 7) Map Employee Data (for non-Excel files)
 # =========================
 
 def safe_str(val):
@@ -270,7 +307,6 @@ def map_employee_data(emp_data, debug=False):
     mapped["PostCode"] = addr_parts[4] if len(addr_parts) >= 5 else np.nan
     mapped["AdviceType*"] = np.nan
 
-    # Corrected: Use emp_data instead of row.
     mapped["DateJoinedScheme"] = robust_parse_date_str(safe_str(emp_data.get("Start Date", "")))
     dob_raw = safe_str(emp_data.get("Date of Birth", "") or emp_data.get("DOB", "")).strip()
     dob = robust_parse_date_str(dob_raw)
@@ -296,13 +332,11 @@ def map_employee_data(emp_data, debug=False):
         print("DEBUG: Mapped data:", mapped)
     return mapped
 
-
 # =========================
-# 6) Append Employee Record to Master DataFrame
+# 8) Append Employee Record to Master DataFrame
 # =========================
 
 def append_employee_record(df, emp_data, debug=False):
-    # If the employee data is already mapped (e.g. from an Excel file), don't re-map it.
     if "Surname*" in emp_data:
         mapped_data = emp_data
     else:
@@ -325,13 +359,11 @@ def append_employee_record(df, emp_data, debug=False):
     return df
 
 # =========================
-# 7) Export Master File
+# 9) Export Master File
 # =========================
 
 def export_master_file(df, file_name):
-    # Convert the DataFrame to CSV format (as a string) without the index
     csv_data = df.to_csv(index=False)
-    # Encode to UTF-8 bytes (required for the download button)
     output = csv_data.encode('utf-8')
     mime = "text/csv"
     file_ext = "csv"
