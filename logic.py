@@ -1,11 +1,20 @@
 import io
 import re
+import json
 import pandas as pd
 import numpy as np
 import docx2txt
 import docx
 import PyPDF2
 import datetime
+import openai
+import streamlit as st
+import os
+
+# Set the OpenAI API key from Streamlit secrets or environment variables.
+openai.api_key = os.getenv("OPENAI_API_KEY") or st.secrets.get("OPENAI_API_KEY")
+if not openai.api_key:
+    raise ValueError("OpenAI API key not found in environment variables or Streamlit secrets")
 
 # =========================
 # 1) Field Map (for non-Excel employee files)
@@ -42,7 +51,7 @@ FIELD_MAP = {
 }
 
 # =========================
-# Additional Mapping for Excel files (e.g., Book1.xlsx)
+# Additional Mapping for Excel files (and used for AI mapping)
 # =========================
 EXCEL_FIELD_MAP = {
     "CategoryName": "Category Name",
@@ -68,18 +77,73 @@ EXCEL_FIELD_MAP = {
     "Telephone.1": "Mobile Telephone Number",
     "Basic Salary": "Basic Salary",
     "Basic Annual Salary": "Basic Salary",  # Both map to the same internal key
-    "Salary": "Basic Salary",
-    "Salary": "Salary"   # New mapping for files that use "Salary"
+    "Salary": "Basic Salary"   # New mapping for files that use "Salary"
 }
 
 # Merge the additional mapping into the existing FIELD_MAP.
 FIELD_MAP.update(EXCEL_FIELD_MAP)
 
 # =========================
-# 2) Parsing Employee Files (DOCX, PDF, CSV/TXT, Excel)
+# Helper: Apply AI Mapping to a Dictionary
+# =========================
+def apply_ai_mapping_to_dict(data, use_ai=False, debug=False):
+    """
+    If use_ai is True, convert a dictionary (one employee record)
+    into a DataFrame and apply GPT-based column mapping.
+    """
+    if not use_ai:
+        return data
+    df = pd.DataFrame([data])
+    mapping = gpt_map_columns(df.columns, EXCEL_FIELD_MAP)
+    if debug:
+        print("DEBUG: GPT mapping for document:", mapping)
+    df = df.rename(columns=lambda col: mapping.get(col, col))
+    return df.iloc[0].to_dict()
+
+# =========================
+# 2) GPT-powered Column Mapping Function
+# =========================
+def gpt_map_columns(df_columns, mapped_columns):
+    """
+    Uses OpenAI GPT-4 to intelligently map the Excel sheet's columns (or dictionary keys)
+    to the internal field names. Constructs a detailed prompt instructing the model to understand
+    the meaning and content of each column.
+    """
+    prompt = (
+        f"Given the following columns: {list(df_columns)} and the internal mapped fields: {list(mapped_columns.keys())}, "
+        "please map each column to the most appropriate internal field based on the meaning and nature of its data. "
+        "Return your answer as a JSON dictionary with the original column names as keys and internal field names as values. "
+        "If no appropriate match exists for a column, return null for that column."
+    )
+    try:
+        response = openai.ChatCompletion.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant that maps file columns to internal field names."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.2,
+            max_tokens=150
+        )
+        mapping_text = response.choices[0].message['content'].strip()
+        mapping = json.loads(mapping_text)
+    except Exception as e:
+        # Fallback: simple case-insensitive matching if GPT call fails.
+        mapping = {}
+        for col in df_columns:
+            mapped_field = None
+            for key, value in mapped_columns.items():
+                if col.lower() == key.lower() or col.lower() == value.lower():
+                    mapped_field = value
+                    break
+            mapping[col] = mapped_field
+    return mapping
+
+# =========================
+# 3) Parsing Employee Files (DOCX, PDF, CSV/TXT, Excel) with optional AI mapping
 # =========================
 
-def parse_docx(file_bytes, debug=False):
+def parse_docx(file_bytes, use_ai=False, debug=False):
     text = docx2txt.process(io.BytesIO(file_bytes))
     lines = [line.strip() for line in text.split("\n") if line.strip()]
     if debug:
@@ -101,9 +165,10 @@ def parse_docx(file_bytes, debug=False):
                         if debug:
                             print(f"DEBUG: Found '{key}' on separate line -> {fallback_value}")
                         break
-    return data
+    # Apply AI mapping if enabled.
+    return apply_ai_mapping_to_dict(data, use_ai=use_ai, debug=debug)
 
-def parse_pdf(file_bytes, debug=False):
+def parse_pdf(file_bytes, use_ai=False, debug=False):
     pdf_reader = PyPDF2.PdfReader(io.BytesIO(file_bytes))
     text = ""
     for page in pdf_reader.pages:
@@ -130,27 +195,57 @@ def parse_pdf(file_bytes, debug=False):
                         if debug:
                             print(f"DEBUG: Found '{key}' on separate line -> {fallback_value}")
                         break
-    return data
+    # Apply AI mapping if enabled.
+    return apply_ai_mapping_to_dict(data, use_ai=use_ai, debug=debug)
 
-def parse_csv_employee(file_bytes, debug=False):
+def parse_csv_employee(file_bytes, use_ai=False, debug=False):
     text = file_bytes.decode('utf-8')
     try:
         df = pd.read_csv(io.StringIO(text))
+        df.columns = df.columns.str.strip()
     except Exception as e:
         if debug:
             print("DEBUG: Error parsing CSV/TXT employee file:", e)
-        return {}
-    if len(df) > 0:
-        row = df.iloc[0].to_dict()
+        return []
+    
+    if use_ai:
+        mapping = gpt_map_columns(df.columns, EXCEL_FIELD_MAP)
         if debug:
-            print("DEBUG: Parsed CSV/TXT employee row:", row)
-        return row
-    return {}
+            print("DEBUG: GPT mapping for CSV:", mapping)
+        df = df.rename(columns=lambda col: mapping.get(col, col))
+    
+    emp_data_list = []
+    for index, row in df.iterrows():
+        row_dict = row.to_dict()
+        mapped = map_excel_employee_data(row_dict, debug=debug)
+        emp_data_list.append(mapped)
+    return emp_data_list
+
+def parse_excel_employee(file_bytes, sheet_name=None, use_ai=False, debug=False):
+    try:
+        df = pd.read_excel(io.BytesIO(file_bytes), sheet_name=sheet_name)
+        df.columns = df.columns.str.strip()  # Remove extra spaces from column names
+    except Exception as e:
+        if debug:
+            print("DEBUG: Error parsing Excel employee file:", e)
+        return []
+    
+    if use_ai:
+        mapping = gpt_map_columns(df.columns, EXCEL_FIELD_MAP)
+        if debug:
+            print("DEBUG: GPT mapping for Excel:", mapping)
+        df = df.rename(columns=lambda col: mapping.get(col, col))
+    
+    emp_data_list = []
+    for index, row in df.iterrows():
+        row_dict = row.to_dict()
+        mapped = map_excel_employee_data(row_dict, debug=debug)
+        emp_data_list.append(mapped)
+    return emp_data_list
 
 # =========================
-# 3) Updated: Map Excel Employee Row
+# 4) Updated: Map Excel Employee Row
 # =========================
-
 def map_excel_employee_data(row, debug=False):
     mapped = {}
     # Use alternative keys if necessary
@@ -191,28 +286,8 @@ def map_excel_employee_data(row, debug=False):
     return mapped
 
 # =========================
-# 4) Updated: Parse Excel Employee File
-# =========================
-
-def parse_excel_employee(file_bytes, debug=False):
-    try:
-        df = pd.read_excel(io.BytesIO(file_bytes))
-        df.columns = df.columns.str.strip()  # Remove extra spaces from column names
-    except Exception as e:
-        if debug:
-            print("DEBUG: Error parsing Excel employee file:", e)
-        return []
-    emp_data_list = []
-    for index, row in df.iterrows():
-        row_dict = row.to_dict()
-        mapped = map_excel_employee_data(row_dict, debug=debug)
-        emp_data_list.append(mapped)
-    return emp_data_list
-
-# =========================
 # 5) Load Master File (Excel, CSV, or TXT)
 # =========================
-
 def load_master_file(file_obj, file_name):
     if file_name.lower().endswith((".xlsx", ".xls")):
         df = pd.read_excel(file_obj)
@@ -226,7 +301,6 @@ def load_master_file(file_obj, file_name):
 # =========================
 # 6) Updated: Robust Date Parsing
 # =========================
-
 def remove_ordinal_suffixes(s: str) -> str:
     pattern = r'(\d+)(st|nd|rd|th)\b'
     return re.sub(pattern, r'\1', s, flags=re.IGNORECASE)
@@ -267,9 +341,8 @@ def robust_parse_date_str(date_str) -> object:
     return parsed if not pd.isnull(parsed) else pd.NaT
 
 # =========================
-# 7) Map Employee Data (for non-Excel files)
+# 7) Map Employee Data (for non-Excel files) – Legacy Function
 # =========================
-
 def safe_str(val):
     if isinstance(val, str):
         return val
@@ -306,12 +379,10 @@ def map_employee_data(emp_data, debug=False):
     mapped["Country"] = np.nan
     mapped["PostCode"] = addr_parts[4] if len(addr_parts) >= 5 else np.nan
     mapped["AdviceType*"] = np.nan
-
     mapped["DateJoinedScheme"] = robust_parse_date_str(safe_str(emp_data.get("Start Date", "")))
     dob_raw = safe_str(emp_data.get("Date of Birth", "") or emp_data.get("DOB", "")).strip()
     dob = robust_parse_date_str(dob_raw)
     mapped["DateofBirth*"] = dob if not pd.isnull(dob) else np.nan
-
     mapped["EmailAddress"] = safe_str(emp_data.get("Personal Email Address", "") or emp_data.get("Email", "")).strip() or np.nan
     mapped["Gender"] = safe_str(emp_data.get("Gender", "")).strip() or np.nan
     home_num = safe_str(emp_data.get("Home Telephone Number", "") or emp_data.get("Telephone Number", "")).strip()
@@ -327,7 +398,6 @@ def map_employee_data(emp_data, debug=False):
     mapped["SplitTemplateGroupSource"] = np.nan
     mapped["ServiceStatus"] = np.nan
     mapped["ClientCategory"] = np.nan
-
     if debug:
         print("DEBUG: Mapped data:", mapped)
     return mapped
@@ -335,8 +405,13 @@ def map_employee_data(emp_data, debug=False):
 # =========================
 # 8) Append Employee Record to Master DataFrame
 # =========================
-
 def append_employee_record(df, emp_data, debug=False):
+    # emp_data is expected to be a dictionary
+    if isinstance(emp_data, list):
+        # In case a list is passed, iterate over it
+        for item in emp_data:
+            df = append_employee_record(df, item, debug=debug)
+        return df
     if "Surname*" in emp_data:
         mapped_data = emp_data
     else:
@@ -361,7 +436,6 @@ def append_employee_record(df, emp_data, debug=False):
 # =========================
 # 9) Export Master File
 # =========================
-
 def export_master_file(df, file_name):
     csv_data = df.to_csv(index=False)
     output = csv_data.encode('utf-8')

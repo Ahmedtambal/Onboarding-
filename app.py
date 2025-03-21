@@ -5,7 +5,6 @@ from logic import (
     load_master_file, append_employee_record, export_master_file
 )
 
-# Enable debugging output
 DEBUG = True
 
 # Inject custom CSS for a modern, stylish UI.
@@ -73,6 +72,9 @@ st.markdown(
     """, unsafe_allow_html=True
 )
 
+# Single checkbox for AI mapping on all file types.
+use_ai_mapping = st.checkbox("AI mapping")
+
 # Two-column layout for file uploads.
 col1, col2 = st.columns(2)
 with col1:
@@ -95,24 +97,33 @@ if emp_files is not None and len(emp_files) > 0 and master_file is not None:
         file_bytes = emp_file.read()
         emp_data_list = []
         if emp_file.name.lower().endswith(".docx"):
-            emp_data = parse_docx(file_bytes, debug=DEBUG)
+            emp_data = parse_docx(file_bytes, use_ai=use_ai_mapping, debug=DEBUG)
             emp_data_list.append(emp_data)
         elif emp_file.name.lower().endswith(".pdf"):
-            emp_data = parse_pdf(file_bytes, debug=DEBUG)
+            emp_data = parse_pdf(file_bytes, use_ai=use_ai_mapping, debug=DEBUG)
             emp_data_list.append(emp_data)
         elif emp_file.name.lower().endswith((".csv", ".txt")):
-            emp_data = parse_csv_employee(file_bytes, debug=DEBUG)
-            emp_data_list.append(emp_data)
+            emp_data_list.extend(parse_csv_employee(file_bytes, use_ai=use_ai_mapping, debug=DEBUG))
         elif emp_file.name.lower().endswith((".xlsx", ".xls")):
-            # For Excel employee files, treat each row as a new employee.
-            emp_data_list = parse_excel_employee(file_bytes, debug=DEBUG)
+            # For Excel files, check if there are multiple sheets.
+            try:
+                xls = pd.ExcelFile(file_bytes)
+                if len(xls.sheet_names) > 1:
+                    sheet = st.selectbox(f"Select sheet for {emp_file.name}", xls.sheet_names)
+                    emp_data_list = parse_excel_employee(file_bytes, sheet_name=sheet, use_ai=use_ai_mapping, debug=DEBUG)
+                else:
+                    emp_data_list = parse_excel_employee(file_bytes, use_ai=use_ai_mapping, debug=DEBUG)
+            except Exception as e:
+                st.error(f"Error processing Excel file {emp_file.name}: {e}")
+                continue
         else:
             st.error(f"Unsupported employee file format: {emp_file.name}")
             continue
 
         for idx, emp_data in enumerate(emp_data_list):
             st.subheader(f"Extracted Data from {emp_file.name} - Employee {idx+1}")
-            # st.write(emp_data)  # Commented out to hide JSON output
+            # Uncomment the line below to see the extracted data for debugging
+            # st.write(emp_data)
             df = append_employee_record(df, emp_data, debug=DEBUG)
     
     st.subheader("Current Master Record")
